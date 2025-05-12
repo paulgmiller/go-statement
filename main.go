@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 func main() {
@@ -16,25 +17,27 @@ func main() {
 	}
 
 	dir := os.Args[1]
-	var totalStmtCount int
 
-	// Walk the directory tree, looking for *.go files.
+	// Compute statements per directory (direct and recursive)
+	var dirDirect = make(map[string]int)
+	var dirsSet = make(map[string]bool)
+	// Walk the directory tree, collecting direct counts and directories
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return err // e.g. permissions error
+			return err
 		}
-
-		// Only parse regular files with a .go extension
-		if !info.IsDir() && filepath.Ext(path) == ".go" {
-			stmtCount, parseErr := countStatements(path)
-			if parseErr != nil {
-				// You could return the error or just log it and continue
-				return parseErr
+		if info.IsDir() {
+			dirsSet[path] = true
+			return nil
+		}
+		if filepath.Ext(path) == ".go" {
+			count, err := countStatements(path)
+			if err != nil {
+				return err
 			}
-
-			// Print the count for this file and add to total
-			fmt.Printf("%s: %d statements\n", path, stmtCount)
-			totalStmtCount += stmtCount
+			d := filepath.Dir(path)
+			dirDirect[d] += count
+			dirsSet[d] = true
 		}
 		return nil
 	})
@@ -44,7 +47,30 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Total statements in directory '%s': %d\n", dir, totalStmtCount)
+	// Gather and sort directories
+	dirs := make([]string, 0, len(dirsSet))
+	for d := range dirsSet {
+		dirs = append(dirs, d)
+	}
+	sort.Strings(dirs)
+
+	// Compute recursive counts bottom-up
+	dirRecursive := make(map[string]int)
+	for i := len(dirs) - 1; i >= 0; i-- {
+		d := dirs[i]
+		dirRecursive[d] = dirDirect[d]
+		for j := i + 1; j < len(dirs); j++ {
+			other := dirs[j]
+			if filepath.Dir(other) == d {
+				dirRecursive[d] += dirRecursive[other]
+			}
+		}
+	}
+
+	// Print directory stats
+	for _, d := range dirs {
+		fmt.Printf("%s: %d statements (direct), %d statements (recursive)\n", d, dirDirect[d], dirRecursive[d])
+	}
 }
 
 // countStatements parses a single .go file and returns the statement count, excluding import declarations.
